@@ -178,11 +178,11 @@ export default function PaymentScreen() {
                 </div>
             </header>
 
-            <main className="flex-1 flex flex-col items-center justify-start pt-4 pb-12 overflow-y-auto hide-scrollbar">
+            <main className="flex-1 flex flex-col items-center justify-start pt-2 pb-8 overflow-y-auto hide-scrollbar">
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="bg-neutral-900 border items-center border-neutral-800 p-10 rounded-3xl shadow-2xl shadow-blue-900/10 flex flex-col max-w-md w-full"
+                    className="bg-neutral-900 border items-center border-neutral-800 p-6 rounded-3xl shadow-2xl shadow-blue-900/10 flex flex-col max-w-sm w-full"
                 >
                     <div className="bg-blue-600/20 p-4 rounded-full text-blue-400 mb-6">
                         <CreditCard size={32} />
@@ -192,7 +192,7 @@ export default function PaymentScreen() {
                         Scan the QRIS code below using your favorite e-wallet or banking app (GoPay, OVO, Dana, LinkAja, BCA, etc.)
                     </p>
 
-                    <div className="bg-white p-6 rounded-2xl shadow-inner relative flex justify-center w-64 h-64 items-center">
+                    <div className="bg-white p-4 rounded-2xl shadow-inner relative flex justify-center w-56 h-56 items-center">
                         {isPaid ? (
                             <motion.div
                                 initial={{ scale: 0 }}
@@ -227,7 +227,7 @@ export default function PaymentScreen() {
                     </div>
 
                     {!isPaid && (
-                        <div className="mt-8 w-full">
+                        <div className="mt-6 w-full">
                             <div className="relative">
                                 <div className="absolute inset-0 flex items-center">
                                     <div className="w-full border-t border-neutral-800"></div>
@@ -243,7 +243,7 @@ export default function PaymentScreen() {
                             </div>
                             <button
                                 onClick={() => setIsCashModalOpen(true)}
-                                className="mt-6 w-full py-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold transition-all border border-neutral-700 hover:border-neutral-500 flex items-center justify-center gap-2 group"
+                                className="mt-4 w-full py-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold transition-all border border-neutral-700 hover:border-neutral-500 flex items-center justify-center gap-2 group"
                             >
                                 <Banknote size={20} className="text-emerald-400 group-hover:scale-110 transition-transform" />
                                 Cash Payment
