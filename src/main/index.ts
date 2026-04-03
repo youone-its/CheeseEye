@@ -96,9 +96,11 @@ app.on('before-quit', () => {
 // IPC Examples
 ipcMain.handle('ping', () => 'pong');
 
-// --- digiCamControl Integration ---
+// --- DSLR / digiCamControl Integration ---
 let watcher: chokidar.FSWatcher | null = null;
-const ONEDRIVE_BASE_PATH = 'C:\\Users\\Juanz\\OneDrive\\Gambar\\digiCamControl\\Session1';
+const DEFAULT_ID_PATH = path.join(os.homedir(), 'OneDrive', 'Gambar', 'digiCamControl', 'Session1');
+const DEFAULT_EN_PATH = path.join(os.homedir(), 'OneDrive', 'Pictures', 'digiCamControl', 'Session1');
+const ONEDRIVE_BASE_PATH = fs.existsSync(DEFAULT_ID_PATH) ? DEFAULT_ID_PATH : DEFAULT_EN_PATH;
 let activeSessions: string[] = []; // Track sessions for cleanup
 
 ipcMain.handle('trigger-external-shutter', async () => {
@@ -124,24 +126,27 @@ ipcMain.handle('trigger-external-shutter', async () => {
   });
 });
 
-ipcMain.handle('start-folder-watcher', (_event, { sessionId }) => {
+ipcMain.handle('start-folder-watcher', (_event, { sessionId, capturePath }) => {
   if (watcher) watcher.close();
 
   // Track session for auto-cleanup on quit
   if (!activeSessions.includes(sessionId)) activeSessions.push(sessionId);
 
-  const sessionPath = path.join(ONEDRIVE_BASE_PATH, sessionId);
+  const finalCapturePath = capturePath || ONEDRIVE_BASE_PATH;
+  const sessionPath = path.join(finalCapturePath, sessionId);
+  
   if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
 
-  const watchPath = ONEDRIVE_BASE_PATH;
+  const watchPath = finalCapturePath;
   if (!fs.existsSync(watchPath)) fs.mkdirSync(watchPath, { recursive: true });
 
   console.log(`Watching folder: ${watchPath}`);
 
   watcher = chokidar.watch(watchPath, {
-    ignored: /(^|[/\\])\../, // ignore dotfiles
+    ignored: /(^|[\/\\])\../, // ignore dotfiles
     persistent: true,
-    ignoreInitial: true, // Don't trigger for existing files
+    depth: 1, // Only watch ONE level deep (the session folders)
+    ignoreInitial: true,
     awaitWriteFinish: {
       stabilityThreshold: 1000,
       pollInterval: 100

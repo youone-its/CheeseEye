@@ -19,6 +19,7 @@ export default function AdminScreen() {
     const [midtransServerKey, setMidtransServerKey] = useState('');
     const [localBackground, setLocalBackground] = useState('');
     const [locationId, setLocationId] = useState('Branch 01');
+    const [dslrCapturePath, setDslrCapturePath] = useState('C:\\Users\\Juanz\\OneDrive\\Gambar\\digiCamControl\\Session1');
     const [templates, setTemplates] = useState<any[]>([]);
     const [isSaving, setIsSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState('');
@@ -72,6 +73,7 @@ export default function AdminScreen() {
             setMidtransServerKey(config.midtransServerKey || '');
             setLocalBackground(config.localBackground || '');
             setLocationId(config.locationId || 'Branch 01');
+            setDslrCapturePath(config.dslrCapturePath || 'C:\\Users\\Juanz\\OneDrive\\Gambar\\digiCamControl\\Session1');
             setTemplates(config.templates || []);
         } catch (err) {
             console.error("Failed to load config", err);
@@ -104,6 +106,7 @@ export default function AdminScreen() {
                 midtransServerKey,
                 localBackground,
                 locationId,
+                dslrCapturePath,
                 templates
             };
 
@@ -369,6 +372,25 @@ export default function AdminScreen() {
                                     placeholder="e.g. Branch 01"
                                 />
                             </div>
+
+                            <div className="border-t border-neutral-800 pt-6">
+                                <h3 className="font-medium text-white mb-2 font-bold flex items-center gap-2">
+                                    📸 DSLR Capture Path
+                                </h3>
+                                <p className="text-sm text-neutral-400 mb-3">
+                                    The folder where digiCamControl saves your camera's high-res photos.
+                                </p>
+                                <input
+                                    type="text"
+                                    value={dslrCapturePath}
+                                    onChange={(e) => setDslrCapturePath(e.target.value)}
+                                    placeholder="C:\Users\Juanz\OneDrive\Gambar\digiCamControl\Session1"
+                                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-emerald-400 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                                />
+                                <p className="mt-2 text-[10px] text-neutral-500 italic opacity-80 uppercase tracking-widest">
+                                    Default: OneDrive\Gambar\digiCamControl\Session1
+                                </p>
+                            </div>
                             
                             <div className="border-t border-neutral-800 pt-6">
                                 <h3 className="font-medium text-white mb-2">Custom Studio Branding</h3>
@@ -518,7 +540,6 @@ export default function AdminScreen() {
                                                 <Edit size={16} /> Edit Photo Slots ({template.slots?.length || 0})
                                             </button>
                                         </div>
-
                                     </div>
                                 </div>
                             </div>

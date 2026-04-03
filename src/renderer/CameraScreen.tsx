@@ -17,6 +17,7 @@ export default function CameraScreen() {
     const [isDSLRMode] = useState(true); // Always use external shutter for capture
     const [isProcessingHostCapture, setIsProcessingHostCapture] = useState(false);
     const [countdown, setCountdown] = useState<number | null>(null);
+    const [dslrCapturePath, setDslrCapturePath] = useState<string>('');
 
     useEffect(() => {
         // Initialize session and photo requirements
@@ -31,6 +32,22 @@ export default function CameraScreen() {
             console.error(e);
             navigate('/selection');
         }
+
+        // Fetch DSLR Path from config
+        const loadConfig = async () => {
+            try {
+                const username = localStorage.getItem('currentUsername');
+                if (!username) return;
+                // @ts-ignore
+                const config = await window.electron.getConfig(username);
+                if (config && config.dslrCapturePath) {
+                    setDslrCapturePath(config.dslrCapturePath);
+                }
+            } catch (err) {
+                console.error("Failed to load dslr path in camera screen", err);
+            }
+        };
+        loadConfig();
     }, [navigate, sessionId]);
 
     const handleSessionEnd = useCallback(() => {
@@ -84,7 +101,7 @@ export default function CameraScreen() {
         if (!isDSLRMode) return;
 
         // @ts-expect-error - electron is injected via preload
-        window.electron.startFolderWatcher({ sessionId });
+        window.electron.startFolderWatcher({ sessionId, capturePath: dslrCapturePath });
 
         // @ts-expect-error - electron is injected via preload
         const unsubscribe = window.electron.onPhotoCaptured((data: { filePath: string; fileName: string }) => {
