@@ -178,7 +178,7 @@ export default function PaymentScreen() {
                 </div>
             </header>
 
-            <main className="flex-1 flex items-center justify-center">
+            <main className="flex-1 flex flex-col items-center justify-start pt-4 pb-12 overflow-y-auto hide-scrollbar">
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -233,7 +233,12 @@ export default function PaymentScreen() {
                                     <div className="w-full border-t border-neutral-800"></div>
                                 </div>
                                 <div className="relative flex justify-center text-sm">
-                                    <span className="px-2 bg-neutral-900 text-neutral-500 font-medium tracking-wide">OR PAY CASH</span>
+                                    <span 
+                                        onClick={() => setIsCashModalOpen(true)}
+                                        className="px-4 py-1 bg-neutral-900 text-neutral-500 font-bold tracking-widest cursor-pointer hover:text-white hover:bg-neutral-800 rounded-full transition-all border border-transparent hover:border-neutral-700"
+                                    >
+                                        OR PAY CASH
+                                    </span>
                                 </div>
                             </div>
                             <button
@@ -281,7 +286,7 @@ export default function PaymentScreen() {
                                 type="text"
                                 maxLength={6}
                                 value={cashPinInput}
-                                onChange={(e) => setCashPinInput(e.target.value.replace(/\\D/g, ''))} // Only allow numbers
+                                onChange={(e) => setCashPinInput(e.target.value.replace(/\D/g, ''))}
                                 className="w-full bg-neutral-950 border border-neutral-700 focus:border-blue-500 transition-colors uppercase text-center text-4xl tracking-[0.25em] py-4 rounded-xl text-white font-mono mb-2"
                                 placeholder="------"
                             />
