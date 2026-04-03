@@ -16,6 +16,7 @@ export default function CameraScreen() {
     const [dslrLiveViewUrl, setDslrLiveViewUrl] = useState<string>('');
     const [isDSLRMode] = useState(true); // Always use external shutter for capture
     const [isProcessingHostCapture, setIsProcessingHostCapture] = useState(false);
+    const [countdown, setCountdown] = useState<number | null>(null);
 
     useEffect(() => {
         // Initialize session and photo requirements
@@ -100,9 +101,18 @@ export default function CameraScreen() {
     }, [isDSLRMode, sessionId]);
 
     const startCaptureSequence = () => {
-        if (isProcessingHostCapture) return; // already capturing
-        takePhoto();
+        if (isProcessingHostCapture || countdown !== null) return;
+        setCountdown(1);
     };
+
+    useEffect(() => {
+        if (countdown === null) return;
+        const timer = setTimeout(() => {
+            setCountdown(null);
+            takePhoto();
+        }, 1000);
+        return () => clearTimeout(timer);
+    }, [countdown]);
 
     const takePhoto = async () => {
         try {
@@ -192,21 +202,20 @@ export default function CameraScreen() {
                     )}
                 </AnimatePresence>
 
-                {/* Loading / Processing Overlay */}
+                {/* Cheesee! Countdown Overlay */}
                 <AnimatePresence>
-                    {isProcessingHostCapture && (
+                    {countdown !== null && (
                         <motion.div
-                            key="processing"
+                            key="countdown"
                             initial={{ opacity: 0, scale: 0.5 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 1.5 }}
-                            transition={{ duration: 0.5 }}
-                            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-30 bg-black/40 backdrop-blur-sm"
+                            animate={{ opacity: 1, scale: 1.2 }}
+                            exit={{ opacity: 0, scale: 2 }}
+                            transition={{ duration: 0.3 }}
+                            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-30"
                         >
-                            <div className="flex flex-col items-center gap-6">
-                                <div className="w-24 h-24 border-8 border-neutral-600 border-t-white rounded-full animate-spin shadow-2xl" />
-                                <p className="text-3xl font-bold text-white drop-shadow-xl tracking-widest uppercase">Processing Photo...</p>
-                            </div>
+                            <h2 className="text-[120px] font-black text-white drop-shadow-[0_0_30px_rgba(37,99,235,0.8)] tracking-tighter italic">
+                                Cheesee!
+                            </h2>
                         </motion.div>
                     )}
                 </AnimatePresence>
