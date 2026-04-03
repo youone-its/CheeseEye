@@ -57,8 +57,12 @@ app.whenReady().then(() => {
   if (!fs.existsSync(templateDir)) fs.mkdirSync(templateDir, { recursive: true });
   expressApp.use('/templates', express.static(templateDir));
 
-  if (!fs.existsSync(ONEDRIVE_BASE_PATH)) fs.mkdirSync(ONEDRIVE_BASE_PATH, { recursive: true });
-  expressApp.use('/sessions', express.static(ONEDRIVE_BASE_PATH));
+  // DYNAMIC SESSIONS FOLDER (Allows updating capture path without app restart)
+  expressApp.use('/sessions', (req, res, next) => {
+    // We use a custom resolver middleware instead of static(ONEDRIVE_BASE_PATH) 
+    // because ONEDRIVE_BASE_PATH can change at runtime.
+    express.static(ONEDRIVE_BASE_PATH)(req, res, next);
+  });
 
   // Listen globally on port 3000
   expressApp.listen(3000, '0.0.0.0');
@@ -100,7 +104,9 @@ ipcMain.handle('ping', () => 'pong');
 let watcher: chokidar.FSWatcher | null = null;
 const DEFAULT_ID_PATH = path.join(os.homedir(), 'OneDrive', 'Gambar', 'digiCamControl', 'Session1');
 const DEFAULT_EN_PATH = path.join(os.homedir(), 'OneDrive', 'Pictures', 'digiCamControl', 'Session1');
-const ONEDRIVE_BASE_PATH = fs.existsSync(DEFAULT_ID_PATH) ? DEFAULT_ID_PATH : DEFAULT_EN_PATH;
+
+// Change to LET to allow dynamic updates from settings
+let ONEDRIVE_BASE_PATH = fs.existsSync(DEFAULT_ID_PATH) ? DEFAULT_ID_PATH : DEFAULT_EN_PATH;
 let activeSessions: string[] = []; // Track sessions for cleanup
 
 ipcMain.handle('trigger-external-shutter', async () => {
@@ -132,12 +138,14 @@ ipcMain.handle('start-folder-watcher', (_event, { sessionId, capturePath }) => {
   // Track session for auto-cleanup on quit
   if (!activeSessions.includes(sessionId)) activeSessions.push(sessionId);
 
-  const finalCapturePath = capturePath || ONEDRIVE_BASE_PATH;
-  const sessionPath = path.join(finalCapturePath, sessionId);
+  // CRITICAL: Synchronize global path with the one from renderer settings
+  if (capturePath) ONEDRIVE_BASE_PATH = capturePath;
+  
+  const sessionPath = path.join(ONEDRIVE_BASE_PATH, sessionId);
   
   if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
 
-  const watchPath = finalCapturePath;
+  const watchPath = ONEDRIVE_BASE_PATH;
   if (!fs.existsSync(watchPath)) fs.mkdirSync(watchPath, { recursive: true });
 
   console.log(`Watching folder: ${watchPath}`);
@@ -416,7 +424,10 @@ ipcMain.handle('get-app-path', () => {
 
 
 
-ipcMain.handle('start-qr-server', async (_event, { sessionId, finalBase64 }) => {
+ipcMain.handle('start-qr-server', async (_event, { sessionId, finalBase64, capturePath }) => {
+  // Sync path if provided
+  if (capturePath) ONEDRIVE_BASE_PATH = capturePath;
+
   const sessionPath = path.join(ONEDRIVE_BASE_PATH, sessionId);
 
   // Track session for auto-cleanup on quit

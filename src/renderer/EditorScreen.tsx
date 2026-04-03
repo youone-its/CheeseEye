@@ -47,6 +47,7 @@ export default function EditorScreen() {
 
     // Global Timer (10 minutes = 600s)
     const [globalTimeLeft, setGlobalTimeLeft] = useState(600);
+    const [dslrCapturePath, setDslrCapturePath] = useState<string>('');
 
     const [templateSize, setTemplateSize] = useState({ width: 800, height: 600 });
     const [displayScale, setDisplayScale] = useState(1);
@@ -74,6 +75,22 @@ export default function EditorScreen() {
             console.error(e);
             navigate('/selection');
         }
+
+        // Fetch DSLR Path from config for saving final results
+        const loadConfig = async () => {
+            try {
+                const username = localStorage.getItem('currentUsername');
+                if (!username) return;
+                // @ts-ignore
+                const config = await window.electron.getConfig(username);
+                if (config && config.dslrCapturePath) {
+                    setDslrCapturePath(config.dslrCapturePath);
+                }
+            } catch (err) {
+                console.error("Failed to load dslr path in editor screen", err);
+            }
+        };
+        loadConfig();
     }, [navigate]);
 
     const [isExporting, setIsExporting] = useState(false);
@@ -119,7 +136,7 @@ export default function EditorScreen() {
                 
                 // Instead of sessionStorage, we send it to main process to be saved as a real file
                 // @ts-expect-error - electron api
-                await window.electron.startQRServer({ sessionId, finalBase64: dataURL });
+                await window.electron.startQRServer({ sessionId, finalBase64: dataURL, capturePath: dslrCapturePath });
                 
                 // We only store the SESSION ID, let the Print Screen fetch the file via HTTP
                 navigate('/print');
