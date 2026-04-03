@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { QRCodeSVG } from 'qrcode.react';
-import { ArrowLeft, CreditCard, Loader2, Banknote, X, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Banknote, ShieldCheck, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 // Removed Supabase
 
@@ -178,75 +177,49 @@ export default function PaymentScreen() {
                 </div>
             </header>
 
-            <main className="flex-1 flex flex-col items-center justify-start pt-2 pb-8 overflow-y-auto hide-scrollbar">
+            <main className="flex-1 flex flex-col items-center justify-start pt-8 pb-8 overflow-y-auto hide-scrollbar">
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="bg-neutral-900 border items-center border-neutral-800 p-6 rounded-3xl shadow-2xl shadow-blue-900/10 flex flex-col max-w-sm w-full"
+                    className="bg-neutral-900 border items-center border-neutral-800 p-10 rounded-3xl shadow-2xl shadow-blue-900/10 flex flex-col max-w-sm w-full"
                 >
-                    <div className="bg-blue-600/20 p-4 rounded-full text-blue-400 mb-6">
-                        <CreditCard size={32} />
+                    <div className="bg-emerald-600/20 p-6 rounded-full text-emerald-400 mb-6 border border-emerald-500/30">
+                        <Banknote size={48} />
                     </div>
-                    <h2 className="text-3xl font-bold mb-2">Complete Payment</h2>
-                    <p className="text-neutral-400 text-center mb-8">
-                        Scan the QRIS code below using your favorite e-wallet or banking app (GoPay, OVO, Dana, LinkAja, BCA, etc.)
+                    
+                    <h2 className="text-3xl font-extrabold mb-2 tracking-tight">Cash Payment</h2>
+                    <p className="text-neutral-400 text-center mb-10 leading-relaxed">
+                        Please pay to the cashier and enter the active 6-digit PIN to start your photo session.
                     </p>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-inner relative flex justify-center w-56 h-56 items-center">
-                        {isPaid ? (
+                    {isPaid ? (
+                        <div className="bg-white p-8 rounded-2xl shadow-inner flex justify-center w-full items-center">
                             <motion.div
                                 initial={{ scale: 0 }}
                                 animate={{ scale: 1 }}
                                 className="text-green-500 flex flex-col items-center"
                             >
-                                <div className="w-24 h-24 rounded-full bg-green-100 flex items-center justify-center mb-4">
-                                    <svg className="w-12 h-12 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
-                                    </svg>
+                                <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mb-4">
+                                    <ShieldCheck size={40} className="text-green-600" />
                                 </div>
-                                <p className="text-neutral-900 font-bold text-lg text-center">Payment Successful!</p>
+                                <p className="text-neutral-950 font-black text-xl text-center">PAYMENT SUCCESS!</p>
                             </motion.div>
-                        ) : paymentError ? (
-                            <div className="flex flex-col items-center gap-4 text-red-500 text-center">
-                                <p className="text-sm font-medium">{paymentError}</p>
-                                <button
-                                    onClick={() => navigate('/selection')}
-                                    className="px-4 py-2 bg-neutral-100 rounded-lg text-neutral-900 font-bold"
-                                >
-                                    Cancel
-                                </button>
-                            </div>
-                        ) : qrContent === 'generating...' ? (
-                            <div className="flex flex-col items-center gap-4 text-neutral-500">
-                                <Loader2 size={32} className="animate-spin text-blue-500" />
-                                <p className="text-sm font-medium">Generating QR...</p>
-                            </div>
-                        ) : (
-                            <QRCodeSVG value={qrContent} size={200} level="H" includeMargin={false} />
-                        )}
-                    </div>
-
-                    {!isPaid && (
-                        <div className="mt-6 w-full">
-                            <div className="relative">
-                                <div className="absolute inset-0 flex items-center">
-                                    <div className="w-full border-t border-neutral-800"></div>
-                                </div>
-                                <div className="relative flex justify-center text-sm">
-                                    <span 
-                                        onClick={() => setIsCashModalOpen(true)}
-                                        className="px-4 py-1 bg-neutral-900 text-neutral-500 font-bold tracking-widest cursor-pointer hover:text-white hover:bg-neutral-800 rounded-full transition-all border border-transparent hover:border-neutral-700"
-                                    >
-                                        OR PAY CASH
-                                    </span>
-                                </div>
-                            </div>
+                        </div>
+                    ) : (
+                        <div className="w-full space-y-4">
                             <button
                                 onClick={() => setIsCashModalOpen(true)}
-                                className="mt-4 w-full py-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold transition-all border border-neutral-700 hover:border-neutral-500 flex items-center justify-center gap-2 group"
+                                className="w-full py-5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xl transition-all shadow-lg shadow-blue-600/25 flex items-center justify-center gap-3 active:scale-[0.98]"
                             >
-                                <Banknote size={20} className="text-emerald-400 group-hover:scale-110 transition-transform" />
-                                Cash Payment
+                                <ShieldCheck size={24} />
+                                Enter Cash PIN
+                            </button>
+                            
+                            <button
+                                onClick={() => navigate('/selection')}
+                                className="w-full py-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-bold transition-all border border-neutral-700 hover:text-white"
+                            >
+                                Back to Selection
                             </button>
                         </div>
                     )}
