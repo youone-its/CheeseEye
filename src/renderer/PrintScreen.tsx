@@ -1,44 +1,48 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { QRCodeSVG } from 'qrcode.react';
-import { Loader2, Printer, CheckCircle, Smartphone } from 'lucide-react';
+import { Loader2, Printer, CheckCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function PrintScreen() {
     const navigate = useNavigate();
+    const hasRun = useRef(false);
     const [status, setStatus] = useState<'printing' | 'ready'>('printing');
-    const [qrUrl, setQrUrl] = useState<string | null>(null);
     const [timeLeft, setTimeLeft] = useState(60); // 1 minute to download
 
     useEffect(() => {
-        async function processPrintAndUpload() {
+        if (hasRun.current) return;
+        hasRun.current = true;
+
+        async function processPrintAndLocalSave() {
             try {
                 const sessionId = sessionStorage.getItem('sessionId');
                 const finalBase64 = sessionStorage.getItem('finalPrintImage');
 
                 if (!sessionId || !finalBase64) {
-                    navigate('/');
+                    navigate('/selection');
                     return;
                 }
 
-                // 1. Send to printer
-                // @ts-ignore
-                await window.electron.printImage({ base64Data: finalBase64 });
+                // 1. Send to printer in the background
+                // @ts-expect-error electron api inject
+                window.electron.printImage({ base64Data: finalBase64 }).catch(e => console.error("Printer err:", e));
 
-                // 2. Start local server & zip files
-                // @ts-ignore
-                const url = await window.electron.startQRServer({ sessionId, finalBase64 });
-                setQrUrl(url);
+                // Since we are in Local Storage Mode, we don't upload to cloud.
+                // We just mark as ready immediately.
                 setStatus('ready');
 
-            } catch (err) {
-                console.error('Failed to process print/upload', err);
-                // Fallback for UI
+            } catch (err: any) {
+                console.error('Failed to process print', err);
                 setStatus('ready');
             }
         }
 
-        processPrintAndUpload();
+        processPrintAndLocalSave();
+    }, [navigate]);
+
+    const handleFinish = useCallback(() => {
+        sessionStorage.clear();
+        navigate('/');
     }, [navigate]);
 
     useEffect(() => {
@@ -56,15 +60,10 @@ export default function PrintScreen() {
             }, 1000);
         }
         return () => clearInterval(interval);
-    }, [status]);
-
-    const handleFinish = () => {
-        sessionStorage.clear();
-        navigate('/');
-    };
+    }, [status, handleFinish]);
 
     return (
-        <div className="min-h-screen bg-neutral-950 text-neutral-50 flex flex-col items-center justify-center font-sans p-8">
+        <div className="min-h-screen bg-transparent text-neutral-50 flex flex-col items-center justify-center font-sans p-8">
 
             {status === 'printing' ? (
                 <motion.div
@@ -81,7 +80,7 @@ export default function PrintScreen() {
                     <h2 className="text-3xl font-bold tracking-tight">Printing your memories...</h2>
                     <div className="flex items-center gap-3 text-neutral-400 bg-neutral-900 px-6 py-3 rounded-full border border-neutral-800">
                         <Loader2 size={20} className="animate-spin text-blue-500" />
-                        <span>Processing local server & zip files</span>
+                        <span>Saving photos to local storage...</span>
                     </div>
                 </motion.div>
             ) : (
@@ -99,21 +98,14 @@ export default function PrintScreen() {
                     </p>
 
                     <div className="grid md:grid-cols-2 gap-8 w-full">
-                        {/* QR Code Section */}
                         <div className="bg-neutral-950 border border-neutral-800 p-8 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden">
                             <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500 rounded-t-2xl"></div>
-                            <div className="bg-white p-4 rounded-xl shadow-lg mb-4">
-                                {qrUrl ? (
-                                    <QRCodeSVG value={qrUrl} size={160} level="H" includeMargin={false} />
-                                ) : (
-                                    <div className="w-[160px] h-[160px] flex items-center justify-center text-neutral-400">Error</div>
-                                )}
+                            <div className="mx-auto w-24 h-24 bg-blue-500/10 rounded-full flex items-center justify-center mb-6">
+                                <Printer size={48} className="text-blue-400" />
                             </div>
-                            <h3 className="font-bold text-lg mb-1 flex items-center gap-2">
-                                <Smartphone size={18} className="text-blue-400" /> Scan QR Code
-                            </h3>
-                            <p className="text-xs text-neutral-500 text-center px-4">
-                                Connect to the photo booth WiFi network and scan to download your full-resolution photos.
+                            <h3 className="font-bold text-lg mb-2">Local Storage Mode</h3>
+                            <p className="text-sm text-neutral-400 text-center px-4">
+                                Your high-resolution photos have been saved to this machine. Cloud download is disabled.
                             </p>
                         </div>
 

@@ -7,56 +7,70 @@ import CameraScreen from './CameraScreen.tsx'
 import EditorScreen from './EditorScreen.tsx'
 import PrintScreen from './PrintScreen.tsx'
 import AdminScreen from './AdminScreen.tsx'
-import AuthScreen from './AuthScreen.tsx'
-import { supabase } from './supabaseClient.ts'
+import LocalAuthScreen from './LocalAuthScreen.tsx'
 import './index.css'
 
 function App() {
-  const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [globalBackground, setGlobalBackground] = useState<string>('');
 
   useEffect(() => {
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
+    const loadAppConfig = async () => {
+      try {
+        const username = localStorage.getItem('currentUsername');
+        if (!username) return;
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
+        // @ts-expect-error - electron is injected via preload
+        const config = await window.electron.getConfig(username);
+        if (config?.localBackground) {
+           setGlobalBackground(config.localBackground);
+        }
+      } catch (err) {
+        console.error("Failed to load generic config early", err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
+    loadAppConfig();
   }, []);
 
   if (loading) {
     return <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-neutral-400">Loading Configuration...</div>;
   }
 
-  // If Supabase is connected but no session, force them to Auth
-  // If Supabase is NOT connected (no .env), let them use the app completely locally.
-  if (supabase && !session) {
-    return <AuthScreen onAuthSuccess={() => setSession(true)} />
-  }
 
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<SelectionScreen />} />
-        <Route path="/payment" element={<PaymentScreen />} />
-        <Route path="/camera" element={<CameraScreen />} />
-        <Route path="/editor" element={<EditorScreen />} />
-        <Route path="/print" element={<PrintScreen />} />
-        <Route path="/admin" element={<AdminScreen />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Router>
+    <div 
+      className="min-h-screen w-full bg-neutral-950 relative"
+      style={
+        globalBackground
+          ? {
+              backgroundImage: `url(${globalBackground})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }
+          : {}
+      }
+    >
+      {/* Heavy blur overlay to keep the UI readable over the custom branding background */}
+      {globalBackground && <div className="absolute inset-0 bg-neutral-950/70 backdrop-blur-xl pointer-events-none z-0" />}
+      
+      <div className="relative z-10 h-full">
+        <Router>
+          <Routes>
+            <Route path="/" element={<LocalAuthScreen />} />
+            <Route path="/selection" element={<SelectionScreen />} />
+            <Route path="/payment" element={<PaymentScreen />} />
+            <Route path="/camera" element={<CameraScreen />} />
+            <Route path="/editor" element={<EditorScreen />} />
+            <Route path="/print" element={<PrintScreen />} />
+            <Route path="/admin" element={<AdminScreen />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Router>
+      </div>
+    </div>
   );
 }
 

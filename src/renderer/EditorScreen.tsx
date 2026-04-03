@@ -1,259 +1,35 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Stage, Layer, Image as KonvaImage, Text, Transformer } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage } from 'react-konva';
 import useImage from 'use-image';
-import { v4 as uuidv4 } from 'uuid';
-import { Clock, Type, ImageIcon, ChevronRight } from 'lucide-react';
-import type { Template } from './SelectionScreen';
+import { Clock, ImageIcon, ChevronRight, CheckCircle2 } from 'lucide-react';
+import type { Template, TemplateSlot } from './SelectionScreen';
 
-// Base types for canvas objects
-type CanvasItemType = 'text' | 'image' | 'emoji';
-interface CanvasItem {
-    id: string;
-    type: CanvasItemType;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    text?: string;
-    src?: string;
-    scaleX?: number;
-    rotation?: number;
-    imageOffsetX?: number;
-    imageOffsetY?: number;
-    imageScale?: number;
-}
+// Helper component to render an assigned photo into a slot
+const SlotImage = ({ slot, photoSrc, onRemove }: { slot: TemplateSlot, photoSrc: string, onRemove: () => void }) => {
+    const [img] = useImage(photoSrc);
 
-// Draggable Image Component with Cropping / Masking
-const DraggableImage = ({ item, isSelected, onSelect, onChange }: any) => {
-    const [img] = useImage(item.src);
-    const shapeRef = useRef<any>(null);
-    const trRef = useRef<any>(null);
-    const [isPanning, setIsPanning] = useState(false);
+    if (!img) return null;
 
-    // Initial setup
-    useEffect(() => {
-        if (img && !item.crop) {
-            const initialWidth = 250;
-            const scale = initialWidth / img.width;
-            const initialHeight = img.height * scale;
-
-            onChange({
-                ...item,
-                width: initialWidth,
-                height: initialHeight,
-                scaleX: 1,
-                scaleY: 1,
-                crop: { x: 0, y: 0, width: img.width, height: img.height }
-            });
-        }
-    }, [img, item, onChange]);
-
-    useEffect(() => {
-        if (isSelected && !isPanning && trRef.current && shapeRef.current) {
-            trRef.current.nodes([shapeRef.current]);
-            trRef.current.getLayer().batchDraw();
-        } else if (trRef.current) {
-            trRef.current.nodes([]);
-            trRef.current.getLayer().batchDraw();
-        }
-        if (!isSelected) {
-            setIsPanning(false);
-        }
-    }, [isSelected, isPanning]);
-
-    if (!img || !item.crop) return null;
+    // Crop the image from the center to fill the slot dimensions
+    const scale = Math.max(slot.width / img.width, slot.height / img.height);
+    const cropWidth = slot.width / scale;
+    const cropHeight = slot.height / scale;
+    const cropX = (img.width - cropWidth) / 2;
+    const cropY = (img.height - cropHeight) / 2;
 
     return (
-        <>
-            <KonvaImage
-                ref={shapeRef}
-                image={img}
-                x={item.x}
-                y={item.y}
-                width={item.width}
-                height={item.height}
-                rotation={item.rotation || 0}
-                crop={item.crop}
-                draggable
-                opacity={isPanning ? 0.8 : 1}
-                onClick={onSelect}
-                onTap={onSelect}
-                onDblClick={(e) => { e.cancelBubble = true; setIsPanning(!isPanning); }}
-                onDblTap={(e) => { e.cancelBubble = true; setIsPanning(!isPanning); }}
-                onDragMove={(e) => {
-                    if (isPanning) {
-                        const node = e.target as any;
-                        const dx = node.x() - item.x;
-                        const dy = node.y() - item.y;
-
-                        node.x(item.x);
-                        node.y(item.y);
-
-                        const scaleX = node.cropWidth() / node.width();
-                        const scaleY = node.cropHeight() / node.height();
-
-                        let newCropX = node.cropX() - dx * scaleX;
-                        let newCropY = node.cropY() - dy * scaleY;
-
-                        // Bound it slightly to prevent losing image
-                        newCropX = Math.max(0, Math.min(newCropX, img.width - node.cropWidth()));
-                        newCropY = Math.max(0, Math.min(newCropY, img.height - node.cropHeight()));
-
-                        node.cropX(newCropX);
-                        node.cropY(newCropY);
-                    }
-                }}
-                onDragEnd={(e) => {
-                    if (isPanning) {
-                        const node = e.target as any;
-                        onChange({
-                            ...item,
-                            crop: {
-                                x: node.cropX(),
-                                y: node.cropY(),
-                                width: node.cropWidth(),
-                                height: node.cropHeight()
-                            }
-                        });
-                    } else {
-                        onChange({
-                            ...item,
-                            x: e.target.x(),
-                            y: e.target.y()
-                        });
-                    }
-                }}
-                onTransform={(_e) => {
-                    const node = shapeRef.current as any;
-                    const scaleX = node.scaleX();
-                    const scaleY = node.scaleY();
-
-                    node.scaleX(1);
-                    node.scaleY(1);
-
-                    const newWidth = Math.max(10, node.width() * scaleX);
-                    const newHeight = Math.max(10, node.height() * scaleY);
-
-                    // Compute current zoom before changing width/height
-                    const currentZoomX = item.width / item.crop.width;
-                    const currentZoomY = item.height / item.crop.height;
-
-                    const activeAnchor = trRef.current?.getActiveAnchor();
-                    const isSide = activeAnchor === 'top-center' || activeAnchor === 'bottom-center' ||
-                        activeAnchor === 'middle-left' || activeAnchor === 'middle-right';
-
-                    if (!isSide) {
-                        // Corner: pure scale
-                        node.width(newWidth);
-                        node.height(newHeight);
-                    } else {
-                        // Side: crop
-                        node.width(newWidth);
-                        node.height(newHeight);
-
-                        const newCropWidth = newWidth / currentZoomX;
-                        const newCropHeight = newHeight / currentZoomY;
-
-                        let newCropX = item.crop.x;
-                        let newCropY = item.crop.y;
-
-                        if (activeAnchor === 'middle-left') {
-                            newCropX = item.crop.x + (item.crop.width - newCropWidth);
-                        } else if (activeAnchor === 'top-center') {
-                            newCropY = item.crop.y + (item.crop.height - newCropHeight);
-                        }
-
-                        node.crop({
-                            x: newCropX,
-                            y: newCropY,
-                            width: newCropWidth,
-                            height: newCropHeight
-                        });
-                    }
-                }}
-                onTransformEnd={() => {
-                    const node = shapeRef.current as any;
-                    onChange({
-                        ...item,
-                        x: node.x(),
-                        y: node.y(),
-                        width: node.width(),
-                        height: node.height(),
-                        rotation: node.rotation(),
-                        crop: {
-                            x: node.cropX(),
-                            y: node.cropY(),
-                            width: node.cropWidth(),
-                            height: node.cropHeight()
-                        }
-                    });
-                }}
-            />
-
-            {isSelected && !isPanning && (
-                <Transformer
-                    ref={trRef}
-                    boundBoxFunc={(oldBox, newBox) => {
-                        if (newBox.width < 10 || newBox.height < 10) return oldBox;
-                        return newBox;
-                    }}
-                />
-            )}
-        </>
-    );
-};
-
-// Draggable Text Component
-const DraggableText = ({ item, isSelected, onSelect, onChange }: any) => {
-    const shapeRef = useRef<any>(null);
-    const trRef = useRef<any>(null);
-
-    useEffect(() => {
-        if (isSelected && trRef.current && shapeRef.current) {
-            trRef.current.nodes([shapeRef.current]);
-            trRef.current.getLayer().batchDraw();
-        }
-    }, [isSelected]);
-
-    return (
-        <>
-            <Text
-                ref={shapeRef}
-                {...item}
-                text={item.text}
-                fontSize={item.width ? undefined : 40}
-                fontFamily="sans-serif"
-                fill="white"
-                draggable
-                onClick={onSelect}
-                onTap={onSelect}
-                onDragEnd={(e) => {
-                    onChange({ ...item, x: e.target.x(), y: e.target.y() });
-                }}
-                onTransformEnd={(_e) => {
-                    const node = shapeRef.current;
-                    onChange({
-                        ...item,
-                        x: node.x(),
-                        y: node.y(),
-                        rotation: node.rotation(),
-                        scaleX: node.scaleX(),
-                        scaleY: node.scaleY()
-                    });
-                }}
-            />
-            {isSelected && (
-                <Transformer
-                    ref={trRef}
-                    enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}
-                    boundBoxFunc={(oldBox, newBox) => {
-                        if (newBox.width < 10) return oldBox;
-                        return newBox;
-                    }}
-                />
-            )}
-        </>
+        <KonvaImage
+            image={img}
+            x={slot.x}
+            y={slot.y}
+            width={slot.width}
+            height={slot.height}
+            rotation={slot.rotation}
+            crop={{ x: cropX, y: cropY, width: cropWidth, height: cropHeight }}
+            onClick={onRemove}
+            onTap={onRemove}
+        />
     );
 };
 
@@ -265,16 +41,14 @@ export default function EditorScreen() {
     const [currentTemplateIndex, setCurrentTemplateIndex] = useState(0);
     const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
 
-    // Array of items per template. We index by template ID or maintain an array parallel to templates
-    const [itemsByTemplate, setItemsByTemplate] = useState<CanvasItem[][]>([]);
-    const [selectedId, selectShape] = useState<string | null>(null);
+    // slotAssignments[templateIndex][slotId] = photoSrc
+    const [slotAssignments, setSlotAssignments] = useState<Record<string, Record<string, string>>>({});
 
     // Global Timer (10 minutes = 600s)
     const [globalTimeLeft, setGlobalTimeLeft] = useState(600);
 
-    // Wait until next frame to check dimensions etc if needed, but for simplicity
-    const canvasWidth = 800;
-    const canvasHeight = 600;
+    const [templateSize, setTemplateSize] = useState({ width: 800, height: 600 });
+    const [displayScale, setDisplayScale] = useState(1);
 
     useEffect(() => {
         try {
@@ -285,15 +59,31 @@ export default function EditorScreen() {
                 const cart = JSON.parse(cartJson);
                 setTemplates(cart);
                 setCapturedPhotos(JSON.parse(photosJson));
-                setItemsByTemplate(cart.map(() => [])); // Initialize empty canvas for each
+
+                // Initialize empty slot assignments
+                const initialAssignments: any = {};
+                cart.forEach((t: Template) => {
+                    initialAssignments[t.id] = {};
+                });
+                setSlotAssignments(initialAssignments);
             } else {
-                navigate('/');
+                navigate('/selection');
             }
         } catch (e) {
             console.error(e);
-            navigate('/');
+            navigate('/selection');
         }
     }, [navigate]);
+
+    const handleFinishEditing = () => {
+        if (stageRef.current) {
+            // Revert display scaling when taking final snapshot 
+            // so we export perfectly at the template's max original resolution mapped 1:1 to printer requirements
+            const dataURL = stageRef.current.toDataURL({ pixelRatio: 1 / displayScale });
+            sessionStorage.setItem('finalPrintImage', dataURL);
+            navigate('/print');
+        }
+    };
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -307,49 +97,71 @@ export default function EditorScreen() {
             });
         }, 1000);
         return () => clearInterval(interval);
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [displayScale, navigate]);
 
-    const handleFinishEditing = async () => {
-        // Generate data URLs for all finalized templates
-        // This is simplified since we only capture the *current* stage here.
-        // In a full implementation, you'd render each template silently, but here we just pass the stage as is 
-        // or just pass whatever is currently on screen if there's only 1. To handle multiple, we just pass what we have.
+    useEffect(() => {
+        if (templates[currentTemplateIndex]?.image) {
+            const img = new Image();
+            img.onload = () => {
+                setTemplateSize({ width: img.width, height: img.height });
+            };
+            img.src = templates[currentTemplateIndex].image;
+        }
+    }, [currentTemplateIndex, templates]);
 
-        // For now we'll save the layout of the current template for proof of concept
-        if (stageRef.current) {
-            const dataURL = stageRef.current.toDataURL({ pixelRatio: 2 });
-            // Save it to IPC for printing later, or just pass base64
-            sessionStorage.setItem('finalPrintImage', dataURL);
-            navigate('/print');
+    useEffect(() => {
+        const calculateScale = () => {
+            const PADDING = 80;
+            const containerWidth = window.innerWidth - 320 - PADDING;
+            const containerHeight = window.innerHeight - 100 - PADDING;
+            if (templateSize.width > 0 && templateSize.height > 0) {
+                const scale = Math.min(
+                    containerWidth / templateSize.width,
+                    containerHeight / templateSize.height
+                );
+                setDisplayScale(scale > 0 ? Math.min(scale, 1) : 1);
+            }
+        };
+        calculateScale();
+        window.addEventListener('resize', calculateScale);
+        return () => window.removeEventListener('resize', calculateScale);
+    }, [templateSize]);
+
+    const currentTemplate = templates[currentTemplateIndex];
+    const currentAssignments = currentTemplate ? slotAssignments[currentTemplate.id] || {} : {};
+
+    const handleAssignPhoto = (photoSrc: string) => {
+        if (!currentTemplate || !currentTemplate.slots) return;
+
+        // Find first empty slot
+        const emptySlot = currentTemplate.slots.find(slot => !currentAssignments[slot.id]);
+        
+        if (emptySlot) {
+            setSlotAssignments(prev => ({
+                ...prev,
+                [currentTemplate.id]: {
+                    ...prev[currentTemplate.id],
+                    [emptySlot.id]: photoSrc
+                }
+            }));
         }
     };
 
-    const addItem = (item: Omit<CanvasItem, 'id'>) => {
-        const newItem = { ...item, id: uuidv4() };
-        const newItemsLists = [...itemsByTemplate];
-        newItemsLists[currentTemplateIndex] = [...newItemsLists[currentTemplateIndex], newItem];
-        setItemsByTemplate(newItemsLists);
+    const handleRemovePhoto = (slotId: string) => {
+        if (!currentTemplate) return;
+        setSlotAssignments(prev => {
+            const next = { ...prev };
+            const nextTpl = { ...next[currentTemplate.id] };
+            delete nextTpl[slotId];
+            next[currentTemplate.id] = nextTpl;
+            return next;
+        });
     };
 
-    const addText = () => addItem({ type: 'text', x: 50, y: 50, text: 'Your Text Here' });
-    const addEmoji = (emoji: string) => addItem({ type: 'text', x: 50, y: 50, text: emoji, width: 60 });
-    const addCapturedPhoto = (src: string) => addItem({ type: 'image', x: 50, y: 50, src });
-
-    const currentItems = itemsByTemplate[currentTemplateIndex] || [];
-
-    const handleItemChange = (i: number, newProps: CanvasItem) => {
-        const newItemsLists = [...itemsByTemplate];
-        const items = [...newItemsLists[currentTemplateIndex]];
-        items[i] = newProps;
-        newItemsLists[currentTemplateIndex] = items;
-        setItemsByTemplate(newItemsLists);
-    };
-
-    const checkDeselect = (e: any) => {
-        const clickedOnEmpty = e.target === e.target.getStage() || e.target.hasName('bg');
-        if (clickedOnEmpty) {
-            selectShape(null);
-        }
+    const isPhotoUsed = (photoSrc: string): boolean => {
+        // Technically this checks the current template only. If a photo can only be used once globally, change the logic to scan all templates
+        return Object.values(currentAssignments).includes(photoSrc);
     };
 
     const formatTime = (seconds: number) => {
@@ -359,11 +171,11 @@ export default function EditorScreen() {
     };
 
     return (
-        <div className="h-screen bg-neutral-950 text-white flex flex-col font-sans overflow-hidden">
+        <div className="h-screen bg-transparent text-white flex flex-col font-sans overflow-hidden">
             {/* Top Bar */}
-            <header className="px-8 py-4 bg-neutral-900 border-b border-neutral-800 flex justify-between items-center shadow-md z-10">
+            <header className="px-8 py-4 bg-neutral-950/80 backdrop-blur-xl border-b border-neutral-800 flex justify-between items-center shadow-md z-10">
                 <div>
-                    <h1 className="text-2xl font-bold tracking-tight">Customize Your Photos</h1>
+                    <h1 className="text-2xl font-bold tracking-tight">Arrange Your Photos</h1>
                     <p className="text-sm text-neutral-400 mt-1">
                         Template {currentTemplateIndex + 1} of {templates.length}
                     </p>
@@ -388,22 +200,15 @@ export default function EditorScreen() {
 
             <div className="flex flex-1 overflow-hidden">
                 {/* Sidebar / Tools */}
-                <aside className="w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col overflow-y-auto">
-                    {/* Tools */}
-                    <div className="p-6 border-b border-neutral-800">
-                        <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-500 mb-4">Decorations</h3>
-                        <div className="grid grid-cols-2 gap-3">
-                            <button onClick={addText} className="flex items-center justify-center gap-2 bg-neutral-800 hover:bg-neutral-700 p-3 rounded-xl transition-colors border border-neutral-700">
-                                <Type size={18} /> Text
-                            </button>
-                            <div className="flex gap-2">
-                                {['✨', '❤️', '🔥', '🎉'].map(e => (
-                                    <button key={e} onClick={() => addEmoji(e)} className="flex-1 bg-neutral-800 hover:bg-neutral-700 p-3 rounded-xl flex justify-center items-center text-xl transition-colors border border-neutral-700">
-                                        {e}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
+                <aside className="w-80 bg-neutral-950/80 backdrop-blur-xl border-r border-neutral-800 flex flex-col overflow-y-auto">
+                    <div className="p-6 pb-2 border-b border-neutral-800 bg-blue-900/10">
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-blue-400 mb-2 flex items-center gap-2">
+                           INSTRUCTIONS
+                        </h3>
+                        <p className="text-sm text-neutral-300 leading-relaxed">
+                            Click on your captured photos to add them to the template slots. <br/><br/>
+                            Click on a photo in the template to remove it.
+                        </p>
                     </div>
 
                     {/* Captured Photos */}
@@ -412,70 +217,64 @@ export default function EditorScreen() {
                             <ImageIcon size={16} /> Captured Photos
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
-                            {capturedPhotos.map((photoSrc, idx) => (
-                                <div
-                                    key={idx}
-                                    className="relative group cursor-pointer aspect-square rounded-xl overflow-hidden border-2 border-transparent hover:border-blue-500 transition-colors"
-                                    onClick={() => addCapturedPhoto(photoSrc)}
-                                >
-                                    <img src={photoSrc} className="w-full h-full object-cover" alt={`capture ${idx}`} />
-                                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                        <span className="bg-blue-600 text-white text-xs px-2 py-1 rounded-md">Add to Canvas</span>
+                            {capturedPhotos.map((photoSrc, idx) => {
+                                const used = isPhotoUsed(photoSrc);
+                                return (
+                                    <div
+                                        key={idx}
+                                        className={`relative group cursor-pointer aspect-square rounded-xl overflow-hidden border-2 transition-all ${
+                                            used ? 'border-blue-500 opacity-60' : 'border-transparent hover:border-neutral-500'
+                                        }`}
+                                        onClick={() => handleAssignPhoto(photoSrc)}
+                                    >
+                                        <img src={photoSrc} className="w-full h-full object-cover" alt={`capture ${idx}`} />
+                                        
+                                        {used && (
+                                            <div className="absolute inset-0 bg-blue-900/40 flex items-center justify-center">
+                                                <CheckCircle2 size={32} className="text-white drop-shadow-md" />
+                                            </div>
+                                        )}
+                                        
+                                        {!used && (
+                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                <span className="bg-neutral-800 text-white text-xs px-2 py-1 rounded-md">Insert Photo</span>
+                                            </div>
+                                        )}
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 </aside>
 
                 {/* Canvas Area */}
-                <main className="flex-1 bg-neutral-950 flex flex-col items-center justify-center p-8 relative">
-                    <div className="bg-neutral-900 p-4 border border-neutral-800 shadow-2xl shadow-blue-900/10 rounded-xl">
+                <main className="flex-1 bg-transparent flex flex-col items-center justify-center p-8 relative">
+                    <div
+                        className="bg-neutral-900 border border-neutral-800 shadow-2xl shadow-blue-900/10 rounded-xl overflow-hidden flex items-center justify-center cursor-default"
+                        style={{ width: templateSize.width * displayScale, height: templateSize.height * displayScale }}
+                    >
                         <Stage
-                            width={canvasWidth}
-                            height={canvasHeight}
-                            onMouseDown={checkDeselect}
-                            onTouchStart={checkDeselect}
+                            width={templateSize.width * displayScale}
+                            height={templateSize.height * displayScale}
+                            scaleX={displayScale}
+                            scaleY={displayScale}
                             ref={stageRef}
-                            className="bg-neutral-800 rounded-lg overflow-hidden relative cursor-crosshair border border-neutral-700"
+                            className="bg-zinc-200 relative"
                         >
                             <Layer>
-                                {/* 1. Captured Photos (Behind Template) */}
-                                {currentItems.map((item, i) => {
-                                    if (item.type === 'image') {
-                                        return (
-                                            <DraggableImage
-                                                key={item.id}
-                                                item={item}
-                                                isSelected={item.id === selectedId}
-                                                onSelect={() => selectShape(item.id)}
-                                                onChange={(newProps: any) => handleItemChange(i, newProps)}
-                                            />
-                                        )
+                                {/* 1. Photos in Slots (Behind Template) */}
+                                {currentTemplate?.slots?.map((slot) => {
+                                    const photoSrc = currentAssignments[slot.id];
+                                    if (photoSrc) {
+                                        return <SlotImage key={slot.id} slot={slot} photoSrc={photoSrc} onRemove={() => handleRemovePhoto(slot.id)} />;
                                     }
                                     return null;
                                 })}
 
-                                {/* 2. Template Overlay (With transparent holes) */}
-                                {templates[currentTemplateIndex] && (
-                                    <TemplateOverlay src={templates[currentTemplateIndex].image} width={canvasWidth} height={canvasHeight} />
+                                {/* 2. Template Background Cover */}
+                                {currentTemplate && (
+                                    <TemplateOverlay src={currentTemplate.image} width={templateSize.width} height={templateSize.height} />
                                 )}
-
-                                {/* 3. Text and Emojis (In front of Template) */}
-                                {currentItems.map((item, i) => {
-                                    if (item.type === 'text' || item.type === 'emoji') {
-                                        return (
-                                            <DraggableText
-                                                key={item.id}
-                                                item={item}
-                                                isSelected={item.id === selectedId}
-                                                onSelect={() => selectShape(item.id)}
-                                                onChange={(newProps: any) => handleItemChange(i, newProps)}
-                                            />
-                                        );
-                                    }
-                                    return null;
-                                })}
                             </Layer>
                         </Stage>
                     </div>
@@ -487,10 +286,7 @@ export default function EditorScreen() {
                                 {templates.map((_, idx) => (
                                     <button
                                         key={idx}
-                                        onClick={() => {
-                                            selectShape(null);
-                                            setCurrentTemplateIndex(idx);
-                                        }}
+                                        onClick={() => setCurrentTemplateIndex(idx)}
                                         className={`w-3 h-3 rounded-full transition-all ${idx === currentTemplateIndex ? 'bg-blue-500 w-6' : 'bg-neutral-600 hover:bg-neutral-500'}`}
                                     />
                                 ))}

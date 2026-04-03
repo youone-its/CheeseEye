@@ -17,6 +17,12 @@ export default function CameraScreen() {
     const [captureCountdown, setCaptureCountdown] = useState<number | null>(null);
     const [cameraError, setCameraError] = useState<string | null>(null);
 
+    // Camera Devices State
+    const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+    const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+    const [isDSLRMode] = useState(false); // Default to false for general camera
+    const [dslrLiveViewUrl, setDslrLiveViewUrl] = useState<string>('');
+
     useEffect(() => {
         // Initialize session and photo requirements
         try {
@@ -24,13 +30,20 @@ export default function CameraScreen() {
             if (cartJson) {
                 sessionStorage.setItem('sessionId', sessionId);
             } else {
-                navigate('/');
+                navigate('/selection');
             }
         } catch (e) {
             console.error(e);
-            navigate('/');
+            navigate('/selection');
         }
     }, [navigate, sessionId]);
+
+    const handleSessionEnd = useCallback(() => {
+        // Navigate to editor regardless of whether all required photos were taken
+        // The user will work with whatever they have
+        sessionStorage.setItem('capturedPhotos', JSON.stringify(photosTaken));
+        navigate('/editor');
+    }, [navigate, photosTaken]);
 
     // Global Timer (3 minutes)
     useEffect(() => {
@@ -45,40 +58,133 @@ export default function CameraScreen() {
             });
         }, 1000);
         return () => clearInterval(interval);
-    }, [photosTaken]);
+    }, [handleSessionEnd]);
 
-    const handleSessionEnd = useCallback(() => {
-        // Navigate to editor regardless of whether all required photos were taken
-        // The user will work with whatever they have
-        sessionStorage.setItem('capturedPhotos', JSON.stringify(photosTaken));
-        navigate('/editor');
-    }, [navigate, photosTaken]);
+    const initDevices = useCallback(async (isManualRefresh = false) => {
+        try {
+            // Request initial permissions if needed to get full device labels
+            let initialStream: MediaStream | null = null;
+            
+            // Note: We use a local variable instead of state 'devices' to avoid dependency loop
+            try {
+                initialStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            } catch (e) {
+                console.warn("Initial permissions request failed:", e);
+            }
 
-    // Start Camera
+            const allDevices = await navigator.mediaDevices.enumerateDevices();
+            const videoInputs = allDevices.filter(device => device.kind === 'videoinput');
+
+            setDevices(videoInputs);
+            
+            // Select device
+            if (videoInputs.length > 0) {
+                // Use a ref-like approach or just check the current selectedDeviceId
+                if (!selectedDeviceId || isManualRefresh) {
+                    // If it's a manual refresh, try to find a device that isn't a generic webcam if possible
+                    const preferred = videoInputs.find(d => 
+                        d.label.toLowerCase().includes('video') || 
+                        d.label.toLowerCase().includes('hdmi') || 
+                        d.label.toLowerCase().includes('capture')
+                    );
+                    setSelectedDeviceId(preferred ? preferred.deviceId : videoInputs[0].deviceId);
+                }
+            }
+
+            // Cleanup dummy stream
+            if (initialStream) {
+                initialStream.getTracks().forEach(track => track.stop());
+            }
+            setCameraError(null);
+        } catch (err: unknown) {
+            setCameraError((err as Error).message || 'Failed to enumerate devices.');
+        }
+    }, [selectedDeviceId]); // Only depend on selectedDeviceId to avoid loops with devices state
+
+    // Enumerate Devices and Initial Stream
     useEffect(() => {
+        initDevices();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Run once on mount
+
+    // Start Camera with Selected Device
+    useEffect(() => {
+        if (isDSLRMode) return; // Don't start webcam if in DSLR mode
+
+        const currentVideoRef = videoRef.current;
+
         async function startCamera() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: 1920, height: 1080, facingMode: 'user' },
+                const constraints: MediaStreamConstraints = {
+                    video: selectedDeviceId 
+                        ? { 
+                            deviceId: { exact: selectedDeviceId }, 
+                            width: { ideal: 1920 }, 
+                            height: { ideal: 1080 } 
+                          } 
+                        : { 
+                            width: { ideal: 1920 }, 
+                            height: { ideal: 1080 }, 
+                            facingMode: 'user' 
+                          },
                     audio: false,
-                });
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
                 }
-            } catch (err: any) {
-                setCameraError(err.message || 'Failed to access camera.');
+                setCameraError(null);
+            } catch (err: unknown) {
+                setCameraError((err as Error).message || 'Failed to access camera.');
             }
         }
-        startCamera();
+        
+        // Start device if we have one selected, or if we haven't found devices yet (fallback)
+        if (selectedDeviceId || devices.length === 0) {
+            startCamera();
+        }
 
         return () => {
-            // Cleanup camera on unmount
-            if (videoRef.current && videoRef.current.srcObject) {
-                const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+            // Cleanup camera on unmount or device switch
+            if (currentVideoRef && currentVideoRef.srcObject) {
+                const tracks = (currentVideoRef.srcObject as MediaStream).getTracks();
                 tracks.forEach(t => t.stop());
             }
         };
-    }, []);
+    }, [selectedDeviceId, devices.length, isDSLRMode]);
+
+    // digiCamControl: Live View Refresher
+    useEffect(() => {
+        if (!isDSLRMode) return;
+
+        // digiCamControl Live View updates via http://localhost:8080/liveview.jpg
+        const interval = setInterval(() => {
+            setDslrLiveViewUrl(`http://localhost:8080/liveview.jpg?t=${Date.now()}`);
+        }, 100); // 10 FPS for preview
+
+        return () => clearInterval(interval);
+    }, [isDSLRMode]);
+
+    // digiCamControl: Folder Watcher & Capture Listener
+    useEffect(() => {
+        if (!isDSLRMode) return;
+
+        // @ts-expect-error - electron is injected via preload
+        window.electron.startFolderWatcher({ sessionId });
+
+        // @ts-expect-error - electron is injected via preload
+        const unsubscribe = window.electron.onPhotoCaptured((data: { filePath: string; fileName: string }) => {
+            console.log("Photo received from DSLR folder:", data.filePath);
+            setPhotosTaken((prev) => [...prev, `photobox://${data.filePath}`]);
+        });
+
+        return () => {
+            // @ts-expect-error - electron is injected via preload
+            window.electron.stopFolderWatcher();
+            unsubscribe();
+        };
+    }, [isDSLRMode, sessionId]);
 
     const startCaptureSequence = () => {
         if (captureCountdown !== null) return; // already capturing
@@ -99,8 +205,22 @@ export default function CameraScreen() {
     };
 
     const takePhoto = async () => {
-        if (!videoRef.current || !canvasRef.current) return;
+        if (isDSLRMode) {
+            try {
+                // @ts-expect-error - electron is injected via preload
+                const result = await window.electron.triggerExternalShutter();
+                if (!result.success) {
+                    setCameraError(`DSLR Error: ${result.error || 'Failed to trigger shutter'}`);
+                }
+            } catch (err) {
+                console.error('Failed to trigger external shutter', err);
+                setCameraError('Failed to communicate with digiCamControl');
+            }
+            return;
+        }
 
+        if (!videoRef.current || !canvasRef.current) return;
+        
         const video = videoRef.current;
         const canvas = canvasRef.current;
 
@@ -120,7 +240,7 @@ export default function CameraScreen() {
 
         try {
             // Request Main process to save the photo locally via IPC
-            // @ts-ignore - electron is injected via preload
+            // @ts-expect-error - electron is injected via preload
             const savedPath = await window.electron.savePhoto({
                 sessionId,
                 base64Data,
@@ -143,7 +263,7 @@ export default function CameraScreen() {
     };
 
     return (
-        <div className="h-screen bg-neutral-950 text-white flex flex-col relative overflow-hidden font-sans">
+        <div className="h-screen bg-transparent text-white flex flex-col relative overflow-hidden font-sans">
             {/* Top HUD */}
             <div className="absolute top-0 left-0 right-0 p-8 flex justify-between items-start z-10 pointer-events-none">
                 <div className="bg-neutral-900/80 backdrop-blur-md px-6 py-4 rounded-2xl border border-neutral-700/50 shadow-2xl flex items-center gap-4 pointer-events-auto">
@@ -158,11 +278,40 @@ export default function CameraScreen() {
                     </div>
                 </div>
 
-                <div className="bg-neutral-900/80 backdrop-blur-md px-6 py-4 rounded-2xl border border-neutral-700/50 shadow-2xl text-right pointer-events-auto">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400 mb-1">Photos Taken</p>
-                    <p className="text-3xl font-bold">
-                        <span className="text-blue-400">{photosTaken.length}</span> <span className="text-neutral-500 text-xl font-medium">/ ♾️</span>
-                    </p>
+                {/* Camera Selection Dropdown */}
+                <div className="flex items-center gap-3 pointer-events-auto">
+                    {devices.length > 0 && (
+                        <div className="bg-neutral-900/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-neutral-700/50 shadow-2xl flex items-center gap-3 max-w-[300px]">
+                            <Camera size={20} className="text-neutral-400 flex-shrink-0" />
+                            <select 
+                                className="bg-transparent text-white outline-none text-sm font-medium cursor-pointer appearance-none pr-4 w-full truncate"
+                                value={selectedDeviceId}
+                                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                            >
+                                {devices.map((device, idx) => (
+                                    <option key={device.deviceId} value={device.deviceId} className="bg-neutral-900 text-white">
+                                        {device.label || `Camera ${idx + 1}`}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                    <button 
+                        onClick={() => initDevices(true)}
+                        className="bg-neutral-900/80 backdrop-blur-md p-3 rounded-2xl border border-neutral-700/50 shadow-2xl text-neutral-400 hover:text-white transition-colors"
+                        title="Refresh Cameras"
+                    >
+                        <Clock size={20} className="rotate-180" /> {/* Reusing Clock as Refresh for now, or use RotateCcw if available */}
+                    </button>
+                </div>
+
+                <div className="bg-neutral-900/80 backdrop-blur-md px-6 py-4 rounded-2xl border border-neutral-700/50 shadow-2xl text-right pointer-events-auto flex items-center gap-6">
+                    <div>
+                        <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400 mb-1">Photos Taken</p>
+                        <p className="text-3xl font-bold">
+                            <span className="text-blue-400">{photosTaken.length}</span> <span className="text-neutral-500 text-xl font-medium">/ ♾️</span>
+                        </p>
+                    </div>
                 </div>
             </div>
 
@@ -172,7 +321,17 @@ export default function CameraScreen() {
                     <div className="flex flex-col items-center text-red-400 gap-4">
                         <AlertCircle size={48} />
                         <p className="text-xl font-medium">{cameraError}</p>
+                        <p className="text-sm text-neutral-500 max-w-md text-center">
+                            Check your HDMI connection or Capture Card. Ensure the camera is turned on and outputting a clean HDMI signal.
+                        </p>
                     </div>
+                ) : isDSLRMode ? (
+                    <img 
+                        src={dslrLiveViewUrl} 
+                        alt="DSLR Live View"
+                        className="w-full h-full object-cover transform scale-x-[-1] bg-neutral-950"
+                        onError={() => setDslrLiveViewUrl('')}
+                    />
                 ) : (
                     <video
                         ref={videoRef}

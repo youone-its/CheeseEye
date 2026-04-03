@@ -10,7 +10,12 @@ export default defineConfig(({ mode }) => {
 
     return {
         main: {
-            plugins: [externalizeDepsPlugin()]
+            plugins: [externalizeDepsPlugin()],
+            build: {
+                rollupOptions: {
+                    external: ['electron', 'fs', 'path', 'os', 'child_process']
+                }
+            }
         },
         preload: {
             plugins: [externalizeDepsPlugin()]
