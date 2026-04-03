@@ -7,7 +7,8 @@ import type { Template, TemplateSlot } from './SelectionScreen';
 
 // Helper component to render an assigned photo into a slot
 const SlotImage = ({ slot, photoSrc, onRemove }: { slot: TemplateSlot, photoSrc: string, onRemove: () => void }) => {
-    const [img] = useImage(photoSrc);
+    // ALWAYS use anonymous for cross-origin local HTTP sources to prevent Tainted Canvas exceptions
+    const [img] = useImage(photoSrc, 'anonymous');
 
     if (!img) return null;
 
@@ -75,13 +76,59 @@ export default function EditorScreen() {
         }
     }, [navigate]);
 
-    const handleFinishEditing = () => {
-        if (stageRef.current) {
-            // Revert display scaling when taking final snapshot 
-            // so we export perfectly at the template's max original resolution mapped 1:1 to printer requirements
-            const dataURL = stageRef.current.toDataURL({ pixelRatio: 1 / displayScale });
-            sessionStorage.setItem('finalPrintImage', dataURL);
-            navigate('/print');
+    const [isExporting, setIsExporting] = useState(false);
+
+    const handleFinishEditing = async () => {
+        if (stageRef.current && !isExporting) {
+            setIsExporting(true);
+            try {
+                const sessionId = sessionStorage.getItem('sessionId');
+                if (!sessionId) throw new Error("No session ID found");
+
+                // --- HD/4K QUALITY OPTIMIZATION ---
+                const MAX_EXPORT_SIZE = 4096; // GPU safety limit
+                const TARGET_RESOLUTION = 3840; // Aim for 4K width/height
+
+                // We want the final output to be at least 4K, or the original template size (whichever is higher)
+                let targetWidth = Math.max(templateSize.width, TARGET_RESOLUTION);
+                let targetHeight = (targetWidth / templateSize.width) * templateSize.height;
+
+                // Adjust if height is the dominant dimension for 4K
+                if (targetHeight < TARGET_RESOLUTION && templateSize.height > templateSize.width) {
+                    targetHeight = TARGET_RESOLUTION;
+                    targetWidth = (targetHeight / templateSize.height) * templateSize.width;
+                }
+
+                // Cap to MAX_EXPORT_SIZE to prevent browser/GPU crashes
+                if (targetWidth > MAX_EXPORT_SIZE || targetHeight > MAX_EXPORT_SIZE) {
+                    const capScale = Math.min(MAX_EXPORT_SIZE / targetWidth, MAX_EXPORT_SIZE / targetHeight);
+                    targetWidth *= capScale;
+                    targetHeight *= capScale;
+                }
+
+                // pixelRatio is relative to the STAGE's current physical size (templateSize * displayScale)
+                const currentStageWidth = templateSize.width * displayScale;
+                const exportPixelRatio = targetWidth / currentStageWidth;
+
+                console.log(`Exporting at ${Math.round(targetWidth)}x${Math.round(targetHeight)} (pixelRatio: ${exportPixelRatio})`);
+
+                const dataURL = stageRef.current.toDataURL({ 
+                    pixelRatio: exportPixelRatio,
+                    imageSmoothingEnabled: true
+                });
+                
+                // Instead of sessionStorage, we send it to main process to be saved as a real file
+                // @ts-expect-error - electron api
+                await window.electron.startQRServer({ sessionId, finalBase64: dataURL });
+                
+                // We only store the SESSION ID, let the Print Screen fetch the file via HTTP
+                navigate('/print');
+            } catch (err) {
+                console.error("Failed to generate or save print image!", err);
+                alert("Failed to process image. High-resolution export crashed. Please try again.");
+            } finally {
+                setIsExporting(false);
+            }
         }
     };
 
@@ -301,6 +348,7 @@ export default function EditorScreen() {
 
 // Helper to show template overlaid with transparent windows for photos
 const TemplateOverlay = ({ src, width, height }: { src: string, width: number, height: number }) => {
-    const [img] = useImage(src);
+    // ALWAYS use anonymous for cross-origin local HTTP sources
+    const [img] = useImage(src, 'anonymous');
     return <KonvaImage image={img} x={0} y={0} width={width} height={height} opacity={1} listening={false} name="bg" />;
 }

@@ -133,8 +133,7 @@ export default function AdminScreen() {
                     base64Data,
                     filename: 'background_' + file.name
                 });
-                setLocalBackground(`photobox://${savedPath}`);
-
+                setLocalBackground(savedPath);
             } catch (err) {
                 console.error("Local background save error", err);
             }
@@ -157,7 +156,7 @@ export default function AdminScreen() {
                     filename: file.name
                 });
                 const newTemplates = [...templates];
-                newTemplates[index].image = `photobox://${savedPath}`;
+                newTemplates[index].image = savedPath;
                 setTemplates(newTemplates);
             } catch (err) {
                 console.error("Failed to upload image", err);

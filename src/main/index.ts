@@ -2,10 +2,15 @@ import { app, BrowserWindow, ipcMain, protocol, net } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import axios from 'axios';
+import { execFile } from 'child_process';
 import * as chokidar from 'chokidar';
 import archiver from 'archiver';
 import express from 'express';
+
+// Tweak Electron to handle memory better for high-res image generation
+app.commandLine.appendSwitch('disable-http-cache');
+app.commandLine.appendSwitch('ignore-certificate-errors');
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096'); // Allow up to 4GB RAM for JS heap
 // @ts-expect-error - midtrans-client doesn't have types
 import midtransClient from 'midtrans-client';
 
@@ -36,10 +41,27 @@ function createWindow() {
   });
 }
 
+let expressApp: ReturnType<typeof express> | null = null;
+
 app.whenReady().then(() => {
-  protocol.handle('photobox', (request) => {
-    return net.fetch('file://' + request.url.slice('photobox://'.length));
+  // Start Express Local Asset Server immediately
+  expressApp = express();
+  
+  // Set CORS for all routes (to allow standard `<img src>` elements from localhost React to access it easily)
+  expressApp.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    next();
   });
+
+  const templateDir = path.join(app.getPath('userData'), 'templates');
+  if (!fs.existsSync(templateDir)) fs.mkdirSync(templateDir, { recursive: true });
+  expressApp.use('/templates', express.static(templateDir));
+
+  if (!fs.existsSync(ONEDRIVE_BASE_PATH)) fs.mkdirSync(ONEDRIVE_BASE_PATH, { recursive: true });
+  expressApp.use('/sessions', express.static(ONEDRIVE_BASE_PATH));
+
+  // Listen globally on port 3000
+  expressApp.listen(3000, '0.0.0.0');
 
   createWindow();
 
@@ -56,40 +78,63 @@ app.on('window-all-closed', () => {
   }
 });
 
+app.on('before-quit', () => {
+  // OTO-CLEANUP: Hapus folder setiap sesi QR dan ZIP file jika aplikasi dimatikan
+  console.log("Cleaning up temporary session folders...");
+  activeSessions.forEach((sid) => {
+    try {
+      const sp = path.join(ONEDRIVE_BASE_PATH, sid);
+      const zp = path.join(ONEDRIVE_BASE_PATH, `${sid}.zip`);
+      if (fs.existsSync(sp)) fs.rmSync(sp, { recursive: true, force: true });
+      if (fs.existsSync(zp)) fs.rmSync(zp, { force: true });
+    } catch (e) {
+      console.error(`Failed to clean up session ${sid}`, e);
+    }
+  });
+});
+
 // IPC Examples
 ipcMain.handle('ping', () => 'pong');
 
 // --- digiCamControl Integration ---
 let watcher: chokidar.FSWatcher | null = null;
-const DIGICAM_DOWNLOAD_PATH = path.join(os.homedir(), 'Pictures', 'digiCamControl'); // Default path
+const ONEDRIVE_BASE_PATH = 'C:\\Users\\Juanz\\OneDrive\\Gambar\\digiCamControl\\Session1';
+let activeSessions: string[] = []; // Track sessions for cleanup
 
 ipcMain.handle('trigger-external-shutter', async () => {
-  try {
-    // digiCamControl Web Server defaults to port 8080
-    await axios.get('http://localhost:8080/remotecontrol?command=Capture');
-    return { success: true };
-  } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('Failed to trigger digiCamControl shutter:', errorMessage);
-    return { success: false, error: errorMessage };
-  }
+  return new Promise((resolve) => {
+    // Jalur default ke Command Line utility bawaan digiCamControl
+    const cliPath = 'C:\\Program Files (x86)\\digiCamControl\\CameraControlCmd.exe';
+    
+    if (!fs.existsSync(cliPath)) {
+      resolve({ success: false, error: 'digiCamControl CLI not found at default location.' });
+      return;
+    }
+
+    // Eksekusi trigger kamera murni via USB CLI, tanpa lewat HTTP
+    execFile(cliPath, ['/capture'], (error, stdout, stderr) => {
+      if (error) {
+        console.error('CLI Capture Error:', stderr || error.message);
+        resolve({ success: false, error: stderr || error.message });
+      } else {
+        console.log('CLI Capture Success:', stdout);
+        resolve({ success: true });
+      }
+    });
+  });
 });
 
 ipcMain.handle('start-folder-watcher', (_event, { sessionId }) => {
-  if (watcher) {
-    watcher.close();
-  }
+  if (watcher) watcher.close();
 
-  const sessionPath = path.join(app.getPath('userData'), 'sessions', sessionId);
-  if (!fs.existsSync(sessionPath)) {
-    fs.mkdirSync(sessionPath, { recursive: true });
-  }
+  // Track session for auto-cleanup on quit
+  if (!activeSessions.includes(sessionId)) activeSessions.push(sessionId);
 
-  // Ensure the digicams download path exists or use a fallback
-  const watchPath = fs.existsSync(DIGICAM_DOWNLOAD_PATH) ? DIGICAM_DOWNLOAD_PATH : path.join(app.getPath('userData'), 'external_captures');
-  if (!fs.existsSync(watchPath)) {
-    fs.mkdirSync(watchPath, { recursive: true });
-  }
+  const sessionPath = path.join(ONEDRIVE_BASE_PATH, sessionId);
+  if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
+
+  const watchPath = ONEDRIVE_BASE_PATH;
+  if (!fs.existsSync(watchPath)) fs.mkdirSync(watchPath, { recursive: true });
 
   console.log(`Watching folder: ${watchPath}`);
 
@@ -103,19 +148,22 @@ ipcMain.handle('start-folder-watcher', (_event, { sessionId }) => {
     }
   });
 
-  watcher.on('add', (filePath) => {
+  watcher.on('add', (filePath: string) => {
     console.log(`New photo detected: ${filePath}`);
     const fileName = path.basename(filePath);
     const destinationPath = path.join(sessionPath, fileName);
+
+    // Ignore files that are already inside a child directory (like sesi-n/file.jpg)
+    if (path.dirname(filePath) !== watchPath) return;
 
     try {
       // Move file to session folder
       fs.renameSync(filePath, destinationPath);
       
-      // Notify renderer
+      // Notify renderer with HTTP URL
       if (mainWindow) {
         mainWindow.webContents.send('photo-captured', {
-          filePath: destinationPath,
+          filePath: `http://127.0.0.1:3000/sessions/${sessionId}/${fileName}`,
           fileName: fileName
         });
       }
@@ -137,22 +185,29 @@ ipcMain.handle('stop-folder-watcher', () => {
 // ----------------------------------
 
 ipcMain.handle('read-file-base64', async (_event, filePath: string) => {
-  const actualPath = filePath.replace('photobox://', '');
+  let actualPath = filePath;
+  if (filePath.startsWith('photobox://')) {
+    try {
+      const urlObj = new URL(filePath);
+      actualPath = urlObj.searchParams.get('path') || filePath.replace('photobox://', '');
+    } catch {
+      actualPath = filePath.replace('photobox://', '');
+    }
+  }
   const data = fs.readFileSync(actualPath, { encoding: 'base64' });
   return `data:image/png;base64,${data}`;
 });
 
 ipcMain.handle('save-photo', async (_event, { sessionId, base64Data, index }) => {
-  const sessionPath = path.join(app.getPath('userData'), 'sessions', sessionId);
-  if (!fs.existsSync(sessionPath)) {
-    fs.mkdirSync(sessionPath, { recursive: true });
-  }
+  const sessionPath = path.join(ONEDRIVE_BASE_PATH, sessionId);
+  if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
 
   const buffer = Buffer.from(base64Data.split(',')[1], 'base64');
   const filePath = path.join(sessionPath, `photo_${index}.png`);
   fs.writeFileSync(filePath, buffer);
 
-  return filePath;
+  // Return HTTP URL
+  return `http://127.0.0.1:3000/sessions/${sessionId}/photo_${index}.png`;
 });
 
 // Settings & Config IPC (Multi-user)
@@ -224,8 +279,8 @@ ipcMain.handle('upload-template', async (_event, { base64Data, filename }) => {
   const filePath = path.join(templateDir, safeFilename);
   fs.writeFileSync(filePath, buffer);
 
-  // Return the path so it can be saved into the config array
-  return filePath;
+  // Return HTTP URL so frontend can load it securely via local express server
+  return `http://127.0.0.1:3000/templates/${safeFilename}`;
 });
 
 ipcMain.handle('download-template', async (_event, { url, id }) => {
@@ -354,10 +409,13 @@ ipcMain.handle('get-app-path', () => {
   return app.getAppPath();
 });
 
-let expressApp: ReturnType<typeof express> | null = null;
+
 
 ipcMain.handle('start-qr-server', async (_event, { sessionId, finalBase64 }) => {
-  const sessionPath = path.join(app.getPath('userData'), 'sessions', sessionId);
+  const sessionPath = path.join(ONEDRIVE_BASE_PATH, sessionId);
+
+  // Track session for auto-cleanup on quit
+  if (!activeSessions.includes(sessionId)) activeSessions.push(sessionId);
 
   // Save the final composite image
   if (finalBase64) {
@@ -366,7 +424,7 @@ ipcMain.handle('start-qr-server', async (_event, { sessionId, finalBase64 }) => 
   }
 
   // Generate Zip
-  const zipPath = path.join(app.getPath('userData'), 'sessions', `${sessionId}.zip`);
+  const zipPath = path.join(ONEDRIVE_BASE_PATH, `${sessionId}.zip`);
   const output = fs.createWriteStream(zipPath);
   const archive = archiver('zip', { zlib: { level: 9 } });
 
@@ -378,20 +436,12 @@ ipcMain.handle('start-qr-server', async (_event, { sessionId, finalBase64 }) => 
     archive.finalize();
   });
 
-  // Start Express if not running
-  if (!expressApp) {
-    expressApp = express();
-    expressApp.use('/download', express.static(path.join(app.getPath('userData'), 'sessions')));
-    expressApp.listen(3000, '0.0.0.0');
-  }
-
   // Cleanup mechanism (1 hour)
   setTimeout(() => {
     if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true, force: true });
     if (fs.existsSync(zipPath)) fs.rmSync(zipPath);
   }, 3600 * 1000);
 
-  // Get local IP
   // Get local IP, prioritizing physical Wi-Fi or Ethernet adapters
   const interfaces = os.networkInterfaces();
   let localIP = '127.0.0.1';
@@ -419,10 +469,10 @@ ipcMain.handle('start-qr-server', async (_event, { sessionId, finalBase64 }) => 
     if (foundIP) break;
   }
 
-  return `http://${localIP}:3000/download/${sessionId}.zip`;
+  return `http://${localIP}:3000/sessions/${sessionId}.zip`;
 });
 
-ipcMain.handle('print-image', async (_event, { base64Data }) => {
+ipcMain.handle('print-image', async (_event, { base64Data, imageUrl }) => {
   return new Promise((resolve) => {
     // Create a browser window specifically for printing
     const printWindow = new BrowserWindow({
@@ -446,13 +496,15 @@ ipcMain.handle('print-image', async (_event, { base64Data }) => {
           </style>
         </head>
         <body>
-          <img src="${base64Data}" onload="window.printHtmlLoaded()" />
+          <img src="${imageUrl || base64Data}" onload="window.printHtmlLoaded()" />
         </body>
       </html>
     `;
 
-    // Wait for the window to finish loading the initial blank page before injecting HTML
-    printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+    // Wait for the window to finish loading the temporary HTMl file
+    const tempHtmlPath = path.join(app.getPath('temp'), 'print.html');
+    fs.writeFileSync(tempHtmlPath, htmlContent);
+    printWindow.loadFile(tempHtmlPath);
 
     printWindow.webContents.on('did-finish-load', async () => {
       try {

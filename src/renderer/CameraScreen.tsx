@@ -6,22 +6,16 @@ import { v4 as uuidv4 } from 'uuid';
 
 export default function CameraScreen() {
     const navigate = useNavigate();
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null);
 
     const [sessionId] = useState(() => uuidv4());
     const [photosTaken, setPhotosTaken] = useState<string[]>([]);
 
     // Timers
     const [globalTimeLeft, setGlobalTimeLeft] = useState(180); // 3 minutes = 180s
-    const [captureCountdown, setCaptureCountdown] = useState<number | null>(null);
     const [cameraError, setCameraError] = useState<string | null>(null);
-
-    // Camera Devices State
-    const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-    const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
-    const [isDSLRMode] = useState(false); // Default to false for general camera
     const [dslrLiveViewUrl, setDslrLiveViewUrl] = useState<string>('');
+    const [isDSLRMode] = useState(true); // Always use external shutter for capture
+    const [isProcessingHostCapture, setIsProcessingHostCapture] = useState(false);
 
     useEffect(() => {
         // Initialize session and photo requirements
@@ -60,111 +54,29 @@ export default function CameraScreen() {
         return () => clearInterval(interval);
     }, [handleSessionEnd]);
 
-    const initDevices = useCallback(async (isManualRefresh = false) => {
-        try {
-            // Request initial permissions if needed to get full device labels
-            let initialStream: MediaStream | null = null;
-            
-            // Note: We use a local variable instead of state 'devices' to avoid dependency loop
-            try {
-                initialStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-            } catch (e) {
-                console.warn("Initial permissions request failed:", e);
-            }
-
-            const allDevices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = allDevices.filter(device => device.kind === 'videoinput');
-
-            setDevices(videoInputs);
-            
-            // Select device
-            if (videoInputs.length > 0) {
-                // Use a ref-like approach or just check the current selectedDeviceId
-                if (!selectedDeviceId || isManualRefresh) {
-                    // If it's a manual refresh, try to find a device that isn't a generic webcam if possible
-                    const preferred = videoInputs.find(d => 
-                        d.label.toLowerCase().includes('video') || 
-                        d.label.toLowerCase().includes('hdmi') || 
-                        d.label.toLowerCase().includes('capture')
-                    );
-                    setSelectedDeviceId(preferred ? preferred.deviceId : videoInputs[0].deviceId);
-                }
-            }
-
-            // Cleanup dummy stream
-            if (initialStream) {
-                initialStream.getTracks().forEach(track => track.stop());
-            }
-            setCameraError(null);
-        } catch (err: unknown) {
-            setCameraError((err as Error).message || 'Failed to enumerate devices.');
-        }
-    }, [selectedDeviceId]); // Only depend on selectedDeviceId to avoid loops with devices state
-
-    // Enumerate Devices and Initial Stream
+    // digiCamControl: Start/Stop Live View & Interval Refresher
     useEffect(() => {
-        initDevices();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Run once on mount
+        let active = true;
 
-    // Start Camera with Selected Device
-    useEffect(() => {
-        if (isDSLRMode) return; // Don't start webcam if in DSLR mode
+        // 1. Perintahkan kamera (melalui digiCamControl) untuk MENYALAKAN Live View / Mirror open.
+        fetch('http://127.0.0.1:5513/?CMD=LiveViewWnd_Show', { mode: 'no-cors' }).catch(() => {});
 
-        const currentVideoRef = videoRef.current;
-
-        async function startCamera() {
-            try {
-                const constraints: MediaStreamConstraints = {
-                    video: selectedDeviceId 
-                        ? { 
-                            deviceId: { exact: selectedDeviceId }, 
-                            width: { ideal: 1920 }, 
-                            height: { ideal: 1080 } 
-                          } 
-                        : { 
-                            width: { ideal: 1920 }, 
-                            height: { ideal: 1080 }, 
-                            facingMode: 'user' 
-                          },
-                    audio: false,
-                };
-
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
-                }
-                setCameraError(null);
-            } catch (err: unknown) {
-                setCameraError((err as Error).message || 'Failed to access camera.');
+        // 2. Tarik snapshot setiap 100ms agar layarnya tidak freeze
+        const interval = setInterval(() => {
+            if (active) {
+                setDslrLiveViewUrl(`http://127.0.0.1:5513/liveview.jpg?t=${Date.now()}`);
             }
-        }
-        
-        // Start device if we have one selected, or if we haven't found devices yet (fallback)
-        if (selectedDeviceId || devices.length === 0) {
-            startCamera();
-        }
+        }, 100);
 
         return () => {
-            // Cleanup camera on unmount or device switch
-            if (currentVideoRef && currentVideoRef.srcObject) {
-                const tracks = (currentVideoRef.srcObject as MediaStream).getTracks();
-                tracks.forEach(t => t.stop());
-            }
+            active = false;
+            clearInterval(interval);
+            // Matikan Live View saat pindah halaman agar kamera tidak panas
+            fetch('http://127.0.0.1:5513/?CMD=LiveViewWnd_Hide', { mode: 'no-cors' }).catch(() => {});
         };
-    }, [selectedDeviceId, devices.length, isDSLRMode]);
+    }, []);
 
-    // digiCamControl: Live View Refresher
-    useEffect(() => {
-        if (!isDSLRMode) return;
 
-        // digiCamControl Live View updates via http://localhost:8080/liveview.jpg
-        const interval = setInterval(() => {
-            setDslrLiveViewUrl(`http://localhost:8080/liveview.jpg?t=${Date.now()}`);
-        }, 100); // 10 FPS for preview
-
-        return () => clearInterval(interval);
-    }, [isDSLRMode]);
 
     // digiCamControl: Folder Watcher & Capture Listener
     useEffect(() => {
@@ -176,7 +88,8 @@ export default function CameraScreen() {
         // @ts-expect-error - electron is injected via preload
         const unsubscribe = window.electron.onPhotoCaptured((data: { filePath: string; fileName: string }) => {
             console.log("Photo received from DSLR folder:", data.filePath);
-            setPhotosTaken((prev) => [...prev, `photobox://${data.filePath}`]);
+            setPhotosTaken((prev) => [...prev, data.filePath]);
+            setIsProcessingHostCapture(false); // Selesai memproses
         });
 
         return () => {
@@ -187,72 +100,25 @@ export default function CameraScreen() {
     }, [isDSLRMode, sessionId]);
 
     const startCaptureSequence = () => {
-        if (captureCountdown !== null) return; // already capturing
-
-        let count = 3;
-        setCaptureCountdown(count);
-
-        const interval = setInterval(() => {
-            count -= 1;
-            if (count <= 0) {
-                clearInterval(interval);
-                setCaptureCountdown(null);
-                takePhoto();
-            } else {
-                setCaptureCountdown(count);
-            }
-        }, 1000);
+        if (isProcessingHostCapture) return; // already capturing
+        takePhoto();
     };
 
     const takePhoto = async () => {
-        if (isDSLRMode) {
-            try {
-                // @ts-expect-error - electron is injected via preload
-                const result = await window.electron.triggerExternalShutter();
-                if (!result.success) {
-                    setCameraError(`DSLR Error: ${result.error || 'Failed to trigger shutter'}`);
-                }
-            } catch (err) {
-                console.error('Failed to trigger external shutter', err);
-                setCameraError('Failed to communicate with digiCamControl');
-            }
-            return;
-        }
-
-        if (!videoRef.current || !canvasRef.current) return;
-        
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-
-        // Set canvas dimensions to match video
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        // Optional: flip context horizontally if the video is mirrored
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const base64Data = canvas.toDataURL('image/png');
-
         try {
-            // Request Main process to save the photo locally via IPC
+            setIsProcessingHostCapture(true); // Tampilkan loading screen sementara nunggu folder watcher
             // @ts-expect-error - electron is injected via preload
-            const savedPath = await window.electron.savePhoto({
-                sessionId,
-                base64Data,
-                index: photosTaken.length + 1
-            });
-
-            // Use our custom photobox:// protocol to bypass local file restrictions
-            setPhotosTaken((prev) => [...prev, `photobox://${savedPath}`]);
+            const result = await window.electron.triggerExternalShutter();
+            
+            if (!result.success) {
+                setCameraError(`DSLR Error: ${result.error || 'Failed to trigger shutter'}`);
+                setIsProcessingHostCapture(false);
+            }
+            // We rely exclusively on the folder watcher `onPhotoCaptured` to add the image now.
         } catch (err) {
-            console.error('Failed to save photo via IPC', err);
-            // Fallback: just store base64 in session if IPC fails (for pure web dev testing)
-            setPhotosTaken((prev) => [...prev, base64Data]);
+            console.error('Failed to trigger external shutter', err);
+            setCameraError('Failed to communicate with digiCamControl Command Line');
+            setIsProcessingHostCapture(false);
         }
     };
 
@@ -278,31 +144,11 @@ export default function CameraScreen() {
                     </div>
                 </div>
 
-                {/* Camera Selection Dropdown */}
-                <div className="flex items-center gap-3 pointer-events-auto">
-                    {devices.length > 0 && (
-                        <div className="bg-neutral-900/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-neutral-700/50 shadow-2xl flex items-center gap-3 max-w-[300px]">
-                            <Camera size={20} className="text-neutral-400 flex-shrink-0" />
-                            <select 
-                                className="bg-transparent text-white outline-none text-sm font-medium cursor-pointer appearance-none pr-4 w-full truncate"
-                                value={selectedDeviceId}
-                                onChange={(e) => setSelectedDeviceId(e.target.value)}
-                            >
-                                {devices.map((device, idx) => (
-                                    <option key={device.deviceId} value={device.deviceId} className="bg-neutral-900 text-white">
-                                        {device.label || `Camera ${idx + 1}`}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
-                    <button 
-                        onClick={() => initDevices(true)}
-                        className="bg-neutral-900/80 backdrop-blur-md p-3 rounded-2xl border border-neutral-700/50 shadow-2xl text-neutral-400 hover:text-white transition-colors"
-                        title="Refresh Cameras"
-                    >
-                        <Clock size={20} className="rotate-180" /> {/* Reusing Clock as Refresh for now, or use RotateCcw if available */}
-                    </button>
+                {/* Camera Config is Removed because User Doesn't Want Webcams */}
+                <div className="pointer-events-auto">
+                    <span className="bg-neutral-900/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-neutral-700/50 shadow-2xl text-emerald-400 font-bold flex items-center gap-2">
+                        <CheckCircle size={18} /> DSLR Ready
+                    </span>
                 </div>
 
                 <div className="bg-neutral-900/80 backdrop-blur-md px-6 py-4 rounded-2xl border border-neutral-700/50 shadow-2xl text-right pointer-events-auto flex items-center gap-6">
@@ -325,28 +171,17 @@ export default function CameraScreen() {
                             Check your HDMI connection or Capture Card. Ensure the camera is turned on and outputting a clean HDMI signal.
                         </p>
                     </div>
-                ) : isDSLRMode ? (
+                ) : (
                     <img 
                         src={dslrLiveViewUrl} 
                         alt="DSLR Live View"
                         className="w-full h-full object-cover transform scale-x-[-1] bg-neutral-950"
-                        onError={() => setDslrLiveViewUrl('')}
-                    />
-                ) : (
-                    <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover transform scale-x-[-1]"
                     />
                 )}
 
-                <canvas ref={canvasRef} className="hidden" />
-
                 {/* Capture Flash Overlay */}
                 <AnimatePresence>
-                    {captureCountdown === null && photosTaken.length > 0 && (
+                    {photosTaken.length > 0 && (
                         <motion.div
                             initial={{ opacity: 1 }}
                             animate={{ opacity: 0 }}
@@ -357,20 +192,21 @@ export default function CameraScreen() {
                     )}
                 </AnimatePresence>
 
-                {/* Big Countdown Overlay */}
+                {/* Loading / Processing Overlay */}
                 <AnimatePresence>
-                    {captureCountdown !== null && (
+                    {isProcessingHostCapture && (
                         <motion.div
-                            key={captureCountdown}
+                            key="processing"
                             initial={{ opacity: 0, scale: 0.5 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 1.5 }}
                             transition={{ duration: 0.5 }}
-                            className="absolute inset-0 flex items-center justify-center pointer-events-none z-30"
+                            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-30 bg-black/40 backdrop-blur-sm"
                         >
-                            <span className="text-[250px] font-extrabold text-white drop-shadow-[0_10px_30px_rgba(0,0,0,0.8)] tabular-nums">
-                                {captureCountdown}
-                            </span>
+                            <div className="flex flex-col items-center gap-6">
+                                <div className="w-24 h-24 border-8 border-neutral-600 border-t-white rounded-full animate-spin shadow-2xl" />
+                                <p className="text-3xl font-bold text-white drop-shadow-xl tracking-widest uppercase">Processing Photo...</p>
+                            </div>
                         </motion.div>
                     )}
                 </AnimatePresence>
@@ -380,7 +216,7 @@ export default function CameraScreen() {
             <div className="absolute bottom-0 left-0 right-0 p-10 flex justify-center items-center gap-12 z-10 pointer-events-none">
                 <button
                     onClick={startCaptureSequence}
-                    disabled={captureCountdown !== null}
+                    disabled={isProcessingHostCapture}
                     className="pointer-events-auto bg-white hover:bg-neutral-200 text-black rounded-full w-24 h-24 flex items-center justify-center shadow-[0_0_50px_rgba(255,255,255,0.4)] transition-all duration-300 disabled:opacity-50 disabled:scale-95 hover:scale-105 active:scale-90 relative"
                 >
                     <div className="w-20 h-20 rounded-full border-4 border-black flex items-center justify-center">
