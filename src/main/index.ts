@@ -25,8 +25,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    autoHideMenuBar: true,
-    fullscreen: true, // For photo booth experience
+    autoHideMenuBar: false,
+    fullscreen: false, // Disabled full screen per user request
   });
 
   if (process.env['ELECTRON_RENDERER_URL']) {
